@@ -1,0 +1,64 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net472</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Version>2.0.0</Version>
+    <FileVersion>$(Version)</FileVersion>
+    <AssemblyVersion>$(Version).0</AssemblyVersion>
+    <Description>File Bootstrap Creator</Description>
+    <DebugType>none</DebugType>
+    <Authors>ZER0, (MagmaMC)</Authors>
+    <Copyright>$(Authors)</Copyright>
+    <Product>Zer0's Bootstraper</Product>
+    <ProductName>$(Product)</ProductName>
+      <SignToolCert>ZER0</SignToolCert>
+    <NeutralLanguage>en-US</NeutralLanguage>
+    <ApplicationIcon>ZER0.ico</ApplicationIcon>
+  </PropertyGroup>
+  <Target Name="PostBuild" AfterTargets="Publish">
+    <Exec Command="Sign &quot;$(PublishDir)VRCHub.exe&quot; &quot;$(SignToolCert)&quot;" />
+    <Exec Command="Sign &quot;$(PublishDir)VRCHub.dll&quot; &quot;$(SignToolCert)&quot;" />
+  </Target>
+  <ItemGroup>
+    <Content Include="ZER0.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Costura.Fody" Version="5.7.0">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" Version="3.3.4">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.11.0" />
+    <PackageReference Include="SharpCompress" Version="0.38.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="System.Windows.Forms" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Update="AppResources.Designer.cs">
+      <DesignTime>True</DesignTime>
+      <AutoGen>True</AutoGen>
+      <DependentUpon>AppResources.resx</DependentUpon>
+    </Compile>
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Update="AppResources.resx">
+      <Generator>ResXFileCodeGenerator</Generator>
+      <LastGenOutput>AppResources.Designer.cs</LastGenOutput>
+    </EmbeddedResource>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Folder Include="Resources\" />
+  </ItemGroup>
+
+</Project>
