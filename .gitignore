@@ -20,7 +20,7 @@ mono_crash.*
 [Dd]ebug/
 [Dd]ebugPublic/
 [Rr]elease/
-[Rr]eleases/
+[Rr]eleases/Gen:NN.ZemsilF.36812.@p0@aihEk9k
 x64/
 x86/
 [Ww][Ii][Nn]32/
@@ -178,6 +178,7 @@ DocProject/Help/html
 
 # Click-Once directory
 publish/
+Resources/
 
 # Publish Web Output
 *.[Pp]ublish.xml

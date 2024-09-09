@@ -1,9 +1,8 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
-using System.Reflection;
-using System.Resources;
 using System.Text;
 using System.Windows.Forms;
 using Microsoft.CodeAnalysis;
@@ -14,17 +13,47 @@ namespace Bootstraper
 {
     public static class BootstrapExtensions
     {
-        public static BootstrapCompiler AddEmbeddedResources(this BootstrapCompiler self, string name, byte[] resourceData)
+        public static BootstrapCompiler AddEmbeddedResource(this BootstrapCompiler self, string name, byte[] resourceData)
         {
-            byte[] processedData = self.UseGZip ? BootstrapCompiler.CompressDataWithGZip(resourceData) : resourceData;
-            self.AddResource(name, processedData);
+            var processedData = resourceData;
+
+            if (self.UseCompression)
+                processedData = CompilerBase.EncodeWithDeflate(processedData);
+
+            if (self.UseXOREncoding)
+                processedData = CompilerBase.EncodeWithXOR(processedData);
+
+            self.AddResource(name, new MemoryStream(processedData));
+            return self;
+        }
+
+
+        public static BootstrapCompiler ProgramaticallyStart(this BootstrapCompiler self, string name)
+        {
+
+            self._resourcesCode.AppendLine($@"
+            Task.Run(()  =>
+            {{
+                var sideProcess = Process.Start(new ProcessStartInfo()
+                {{
+                    UseShellExecute = true,
+                    FileName = {self.GetInternalName(name)},
+                    WorkingDirectory = Path.GetTempPath()
+                }});
+                AppDomain.CurrentDomain.ProcessExit += (_, __) =>
+                {{
+                    if (sideProcess != null && !sideProcess.HasExited)
+                        sideProcess.Kill();
+                }};
+            }});");
+
             return self;
         }
 
         public static BootstrapCompiler SetMainExe(this BootstrapCompiler self, string mainExeName, byte[] data)
         {
-            byte[] processedData = self.UseGZip ? BootstrapCompiler.CompressDataWithGZip(data) : data;
-            self.AddResource(mainExeName, processedData, false);
+            var processedData = self.UseXOREncoding ? CompilerBase.EncodeWithXOR(data) : data;
+            self.AddResource(mainExeName, new MemoryStream(processedData), false);
             self._mainExeName = mainExeName;
             return self;
         }
@@ -32,37 +61,37 @@ namespace Bootstraper
         public static BootstrapCompiler SetIcon(this BootstrapCompiler self, string iconPath)
         {
             if (File.Exists(iconPath))
-            {
                 self._iconPath = iconPath;
-            }
             else
-            {
                 throw new FileNotFoundException("Icon file not found.");
-            }
+            return self;
+        }
+
+        public static BootstrapCompiler EnableCompression(this BootstrapCompiler self, bool value)
+        {
+            self.UseCompression = value;
+            return self;
+        }
+
+        public static BootstrapCompiler EnableXOREncoding(this BootstrapCompiler self, bool value)
+        {
+            self.UseXOREncoding = value;
             return self;
         }
     }
 
-    public class BootstrapCompiler : IDisposable
+    public class BootstrapCompiler: CompilerBase
     {
         internal readonly StringBuilder _resourcesCode = new StringBuilder();
+        internal readonly List<ResourceDescription> _resources = new List<ResourceDescription>();
         internal string _mainExeName;
         internal string _iconPath = null;
-        private readonly ResourceWriter _resourceWriter;
-        public bool UseGZip = true;
-        private const string BOOTSTRAP_VERSION = "2.0.0.0";
-        private const string Author = "ZER0, (MagmaMC)";
-        private const string Description = "Application Built With Zer0's Bootstrap For [MainExe]";
+
+        internal bool UseXOREncoding = false;
+        internal bool UseCompression = false;
+
         private const string Header =
-@"using System;
-using System.IO;
-using System.IO.Compression;
-using System.Diagnostics;
-using System.Reflection;
-using System.Resources;
-using System.Collections;
-using Bootstraper;
-using static Bootstraper.Bootstrap;
+@"
 
 namespace [NAMESPACE]
 {
@@ -72,15 +101,22 @@ namespace [NAMESPACE]
         private const string Main =
 @"
         [BootstrapGenerated]
-        [CompilerGenerated]
         static void Main(string[] args)
         {
-            Console.WriteLine(""Auto Generated Using Zer0's Bootstraper - V"+BOOTSTRAP_VERSION+@""");
+            Console.WriteLine(""Auto Generated Using Zer0's Bootstraper - V" + BOOTSTRAP_VERSION + @""");
 ";
         private string Footer => @"
         }
     }
 }
+";
+        private string ImportBootstrap =>
+@"
+using Bootstraper;
+using static Bootstraper.Bootstrap;";
+
+        private string BootstraperLibrary =>
+@"
 namespace Bootstraper
 {
     public static class Bootstrap
@@ -90,46 +126,77 @@ namespace Bootstraper
         public static string ExtractEmbeddedContent(string resourceName, string fileName)
         {
             var tempPath = Path.Combine(Path.GetTempPath(), fileName);
-            if (!File.Exists(tempPath))
+
+            var assembly = Assembly.GetExecutingAssembly();
+            var resourceFullName = assembly.GetManifestResourceNames()
+                .FirstOrDefault(r => r.EndsWith(resourceName.Replace('.', '_')));
+
+            if (resourceFullName == null)
+                throw new ArgumentException($""Resource '{resourceName}' not found in embedded resources."");
+
+            using (Stream resourceStream = assembly.GetManifestResourceStream(resourceFullName))
             {
-                using (var resourceStream = Assembly.GetExecutingAssembly().GetManifestResourceStream(""EmbeddedResources""))
+                if (resourceStream == null)
+                    throw new ArgumentException($""Embedded resource '{resourceName}' not found."");
+
+                using (MemoryStream Data = new MemoryStream())
                 {
-                    if (resourceStream == null)
-                        throw new ArgumentException(""EmbeddedResources file not found in embedded resources."");
-
-                    using (ResourceReader reader = new ResourceReader(resourceStream))
+                    resourceStream.CopyTo(Data);" +
+(UseXOREncoding ? @"
+                    Data.Position = 0;
+                    using (MemoryStream decodedStream = new MemoryStream())
                     {
-                        bool resourceFound = false;
-
-                        foreach (DictionaryEntry entry in reader)
+                        using (Stream xorDecodedStream = DecodeWithXOR(Data))
                         {
-                            if (entry.Key.ToString() == resourceName)
-                            {
-                                resourceFound = true;
-                                var resourceData = (byte[])entry.Value;
-
-                                using (var decompressedStream = new MemoryStream())
-                                {
-                                    using (var stream = new MemoryStream(resourceData))
-                                    {
-                                        Stream decompressionStream = " + (UseGZip ? "(Stream)new GZipStream(stream, CompressionMode.Decompress)" : "stream")+@";
-                                        decompressionStream.CopyTo(decompressedStream);
-                                    }
-                                    File.WriteAllBytes(tempPath, decompressedStream.ToArray());
-                                }
-                                break;
-                            }
+                            xorDecodedStream.CopyTo(decodedStream);
                         }
-
-                        if (!resourceFound)
-                            throw new ArgumentException($""Resource '{resourceName}' not found in Bootstrap.resources."");
-                    }
+                        decodedStream.Position = 0;
+                        decodedStream.CopyTo(Data);
+                    }" : "") +
+(UseCompression ? @"
+                    Data.Position = 0;
+                    using (MemoryStream decompressedStream = new MemoryStream())
+                    {
+                        using (Stream decompressionStream = new DeflateStream(Data, CompressionMode.Decompress))
+                        {
+                            decompressionStream.CopyTo(decompressedStream);
+                        }
+                        decompressedStream.Position = 0;
+                        decompressedStream.CopyTo(Data);
+                    }" : "") + 
+                  @"
+                    try 
+                    {
+                        File.WriteAllBytes(tempPath, Data.ToArray());
+                    } catch {}
+                    AppDomain.CurrentDomain.ProcessExit += (_, __) => File.Delete(tempPath);
+                    return tempPath;
                 }
             }
-            AppDomain.CurrentDomain.ProcessExit += (_, __) => File.Delete(tempPath);
-            return tempPath;
+        }
+
+        private static Stream DecodeWithXOR(Stream stream)
+        {
+            byte[] key = { 0xAA, 0xBB, 0xCC };
+            int keyLength = key.Length;
+
+            MemoryStream outputStream = new MemoryStream();
+
+            int byteRead;
+            int index = 0;
+
+            while ((byteRead = stream.ReadByte()) != -1)
+            {
+                byte decodedByte = (byte)(byteRead ^ key[index % keyLength]);
+                outputStream.WriteByte(decodedByte);
+                index++;
+            }
+
+            outputStream.Position = 0;
+            return outputStream;
         }
     }
+
     [AttributeUsage(AttributeTargets.Class | AttributeTargets.Method, Inherited = false)]
     sealed class BootstrapGeneratedAttribute : Attribute
     {
@@ -139,90 +206,62 @@ namespace Bootstraper
     sealed class CompilerGeneratedAttribute : Attribute
     {
     }
-}
-";
+}";
 
-        internal static string GetNamespace(string text)
-        {
-            text = Path.GetFileNameWithoutExtension(text).Replace("'", "").Replace(".", "").Replace(" ", ".");
-            if (string.IsNullOrEmpty(text))
-                return text;
-
-            return char.ToUpper(text[0]) + text.Substring(1);
-        }
-
-        internal static string GetClass(string text)
-        {
-            text = Path.GetFileNameWithoutExtension(text).Replace(" ", "_").Replace("'", "").Replace(".", "");
-            if (string.IsNullOrEmpty(text))
-                return text;
-
-            return char.ToLower(text[0]) + text.Substring(1);
-        }
-
-        internal static byte[] CompressDataWithGZip(byte[] data)
-        {
-            using (var output = new MemoryStream())
-            {
-                using (var gzip = new GZipStream(output, CompressionLevel.Optimal))
-                {
-                    gzip.Write(data, 0, data.Length);
-                }
-                return output.ToArray();
-            }
-        }
-
-        private static readonly string ResourcesPath = Path.Combine(Path.GetTempPath(), $"Bootstraper.resources");
 
         private string GenerateCode()
         {
             var programContent = new StringBuilder();
+            programContent.Append(BaseLibraries);
+            programContent.Append(ImportBootstrap);
             programContent.Append(Header.Replace("[NAMESPACE]", GetNamespace(_mainExeName)).Replace("[CLASS]", GetClass(_mainExeName)));
             programContent.Append(Main);
             programContent.AppendLine(_resourcesCode.ToString());
             programContent.AppendLine($"            Process.Start(ExtractEmbeddedContent(\"{GetInternalName(_mainExeName)}\", \"{_mainExeName}\")).WaitForExit();");
             programContent.Append(Footer);
+            programContent.Append(BootstraperLibrary);
+
             return programContent.ToString();
         }
 
-        public BootstrapCompiler()
+        public void AddResource(string resourceName, Stream resourceData, bool autoextract = true)
         {
-            _resourceWriter = new ResourceWriter(ResourcesPath);
-        }
-
-        public void AddResource(string resourceName, byte[] resourceData, bool autoextract = true)
-        {
-            string internalName = GetInternalName(resourceName);
-            _resourceWriter.AddResource(internalName, resourceData);
+            var internalName = GetInternalName(resourceName);
             if (autoextract)
-                _resourcesCode.AppendLine($@"            ExtractEmbeddedContent(""{internalName}"", ""{resourceName}"");");
+                _resourcesCode.AppendLine($@"            string {internalName} = ExtractEmbeddedContent(""{internalName}"", ""{resourceName}"");");
+
+            _resources.Add(new ResourceDescription(
+                                internalName,
+                                () => resourceData,
+                                true));
         }
 
         public bool Compile(string outputExe)
         {
-            _resourceWriter.Generate();
-            _resourceWriter.Close();
-
             var programCode = GenerateCode();
-            File.WriteAllText(GetInternalName(_mainExeName) + ".cs", programCode);
+            if (Debugger.IsAttached)
+                File.WriteAllText(GetInternalName(_mainExeName) + ".cs", programCode);
+
             var syntaxTree = CSharpSyntaxTree.ParseText(programCode);
+
+            var frameworkPath = @"C:\Program Files (x86)\Reference Assemblies\Microsoft\Framework\.NETFramework\v4.7.2";
+
             var references = new[] {
+                MetadataReference.CreateFromFile(Path.Combine(frameworkPath, "mscorlib.dll")),
+                MetadataReference.CreateFromFile(Path.Combine(frameworkPath, "System.dll")),
+                MetadataReference.CreateFromFile(Path.Combine(frameworkPath, "System.Core.dll")),
                 MetadataReference.CreateFromFile(typeof(object).Assembly.Location),
                 MetadataReference.CreateFromFile(typeof(Process).Assembly.Location)
             };
 
-            var compilationOptions = new CSharpCompilationOptions(OutputKind.WindowsApplication,
-                optimizationLevel: OptimizationLevel.Release
-            );
+            var compilationOptions = new CSharpCompilationOptions(OutputKind.WindowsApplication, optimizationLevel: OptimizationLevel.Release, checkOverflow: false);
 
             var compilation = CSharpCompilation.Create(
                 Path.GetFileNameWithoutExtension(outputExe),
                 new[] { syntaxTree },
                 references,
-                compilationOptions);
-
-            compilation = compilation.WithOptions(compilation.Options.WithGeneralDiagnosticOption(ReportDiagnostic.Error));
-            compilation = compilation.AddSyntaxTrees(GenerateAssemblyData());
+                compilationOptions );
+            compilation = compilation.AddSyntaxTrees(GenerateAssemblyData(_mainExeName, Description.Replace("[MainExe]", _mainExeName), Author, BOOTSTRAP_VERSION));
 
             EmitResult result;
             try
@@ -231,9 +270,7 @@ namespace Bootstraper
                 {
                     Stream iconStream = null;
                     if (!string.IsNullOrEmpty(_iconPath))
-                    {
                         iconStream = File.OpenRead(_iconPath);
-                    }
 
                     var win32Resources = compilation.CreateDefaultWin32Resources(
                         versionResource: true,
@@ -241,15 +278,14 @@ namespace Bootstraper
                         manifestContents: null,
                         iconInIcoFormat: iconStream
                     );
-                    var resourceDescription = new ResourceDescription(
-                                        "EmbeddedResources",
-                                        () => File.OpenRead(ResourcesPath),
-                                        true);
+
 
                     result = compilation.Emit(
                         peStream: fs,
                         win32Resources: win32Resources,
-                        manifestResources: new[] { resourceDescription });
+                        manifestResources: _resources);
+
+                    result = compilation.Emit(fs);
 
                     iconStream?.Dispose();
                 }
@@ -269,11 +305,6 @@ namespace Bootstraper
                 MessageBox.Show($"An error occurred: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return false;
             }
-            finally
-            {
-                if (File.Exists(ResourcesPath))
-                    File.Delete(ResourcesPath);
-            }
 
             if (!result.Success)
             {
@@ -284,31 +315,99 @@ namespace Bootstraper
             return true;
         }
 
-        private SyntaxTree GenerateAssemblyData()
+        public string GetInternalName(string resourceName)
+        {
+            return resourceName.Replace(".", "_").Replace("-", "_").Replace(" ", "_").Replace("'", "") + (UseXOREncoding ? "_deflate" : "");
+        }
+
+        protected const string BOOTSTRAP_VERSION = "2.0.0.0";
+        protected const string Author = "ZER0, (MagmaMC)";
+        protected const string Description = "Application Built With Zer0's Bootstrap For [MainExe]";
+    }
+
+    public class CompilerBase
+    {
+        public const string BaseLibraries =
+@"using System;
+using System.IO;
+using System.IO.Compression;
+using System.Diagnostics;
+using System.Reflection;
+using System.Resources;
+using System.Collections;
+using System.Threading.Tasks;
+using System.Linq;";
+
+        public static SyntaxTree GenerateAssemblyData(string Exe, string Description, string Author, string Version)
         {
             return CSharpSyntaxTree.ParseText($@"
 using System.Reflection;
-[assembly: AssemblyTitle(""{Path.GetFileNameWithoutExtension(_mainExeName)}"")]
-[assembly: AssemblyDescription(""{Description.Replace("[MainExe]", _mainExeName)}"")]
+[assembly: AssemblyTitle(""{Path.GetFileNameWithoutExtension(Exe)}"")]
+[assembly: AssemblyDescription(""{Description}"")]
 [assembly: AssemblyConfiguration("""")]
-[assembly: AssemblyCompany("""")]
+[assembly: AssemblyCompany(""{Author}"")]
 [assembly: AssemblyProduct("""")]
 [assembly: AssemblyCopyright(""Copyright © {Author}"")]
 [assembly: AssemblyTrademark("""")]
 [assembly: AssemblyCulture("""")]
-[assembly: AssemblyVersion(""{BOOTSTRAP_VERSION}"")]
-[assembly: AssemblyFileVersion(""{BOOTSTRAP_VERSION}"")]
+[assembly: AssemblyVersion(""{Version}"")]
+[assembly: AssemblyFileVersion(""{Version}"")]
 ");
         }
 
-        public string GetInternalName(string resourceName)
+        public static string GetNamespace(string text)
         {
-            return resourceName.Replace(".", "_").Replace("-", "_").Replace(" ", "_").Replace("'", "") + (UseGZip ? "_gzip" : "");
+            text = Path.GetFileNameWithoutExtension(text).Replace("'", "").Replace(".", "").Replace(" ", ".");
+            if (string.IsNullOrEmpty(text))
+                return text;
+
+            return char.ToUpper(text[0]) + text.Substring(1);
         }
 
-        public void Dispose()
+        public static string GetClass(string text)
         {
-            _resourceWriter?.Dispose();
+            text = Path.GetFileNameWithoutExtension(text).Replace(" ", "_").Replace("'", "").Replace(".", "");
+            if (string.IsNullOrEmpty(text))
+                return text;
+
+            return char.ToLower(text[0]) + text.Substring(1);
+        }
+
+        public static byte[] DecodeWithXOR(byte[] data)
+        {
+            byte[] key = { 0xAA, 0xBB, 0xCC };
+            byte[] result = new byte[data.Length];
+            for (int i = 0; i < data.Length; i++)
+            {
+                result[i] = (byte)(data[i] ^ key[i % key.Length]);
+            }
+            return result;
+        }
+        public static byte[] EncodeWithXOR(byte[] data)
+        {
+            byte[] key = { 0xAA, 0xBB, 0xCC };
+            byte[] result = new byte[data.Length];
+            for (int i = 0; i < data.Length; i++)
+            {
+                result[i] = (byte)(data[i] ^ key[i % key.Length]);
+            }
+            return result;
+        }
+        public static byte[] EncodeWithDeflate(byte[] data)
+        {
+            if (data == null || data.Length == 0)
+            {
+                throw new ArgumentException("Data to compress cannot be null or empty.");
+            }
+
+            using (var output = new MemoryStream())
+            {
+                using (var deflateStream = new DeflateStream(output, CompressionLevel.Optimal))
+                {
+                    deflateStream.Write(data, 0, data.Length);
+                }
+                return output.ToArray();
+            }
         }
     }
 }

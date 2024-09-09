@@ -103,7 +103,7 @@ namespace Bootstraper
             BuildButton.Content = "Compiling...";
             byte[] mainExeBytes = File.ReadAllBytes(mainExePath);
             var compiler = new BootstrapCompiler();
-            compiler.UseGZip = UseGZip.IsChecked ?? true;
+            compiler.UseCompression = UseGZip.IsChecked ?? true;
             compiler.SetMainExe(Path.GetFileName(mainExePath), mainExeBytes);
 
             if (!string.IsNullOrEmpty(iconPath))
@@ -111,20 +111,18 @@ namespace Bootstraper
                     compiler.SetIcon(iconPath);
 
             SaveDependencies();
-
             foreach (var dependency in Dependencies.GetList())
             {
                 if (File.Exists(dependency))
                 {
                     byte[] dependencyBytes = File.ReadAllBytes(dependency);
-                    compiler = compiler.AddEmbeddedResources(Path.GetFileName(dependency), dependencyBytes);
+                    compiler.AddEmbeddedResource(Path.GetFileName(dependency), dependencyBytes);
                 }
                 else
                 {
                     MessageBox.Show($"Dependency {dependency} does not exist.", "Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
                 }
             }
-
             Thread CompileThread = new Thread(() =>
             {
                 bool result = compiler.Compile(outputExePath);
