@@ -13,14 +13,9 @@
     <Copyright>$(Authors)</Copyright>
     <Product>Zer0's Bootstraper</Product>
     <ProductName>$(Product)</ProductName>
-      <SignToolCert>ZER0</SignToolCert>
     <NeutralLanguage>en-US</NeutralLanguage>
     <ApplicationIcon>ZER0.ico</ApplicationIcon>
   </PropertyGroup>
-  <Target Name="PostBuild" AfterTargets="Publish">
-    <Exec Command="Sign &quot;$(PublishDir)VRCHub.exe&quot; &quot;$(SignToolCert)&quot;" />
-    <Exec Command="Sign &quot;$(PublishDir)VRCHub.dll&quot; &quot;$(SignToolCert)&quot;" />
-  </Target>
   <ItemGroup>
     <Content Include="ZER0.ico" />
   </ItemGroup>
