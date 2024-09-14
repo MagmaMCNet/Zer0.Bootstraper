@@ -52,7 +52,14 @@ namespace Bootstraper
 
         public static BootstrapCompiler SetMainExe(this BootstrapCompiler self, string mainExeName, byte[] data)
         {
-            var processedData = self.UseXOREncoding ? CompilerBase.EncodeWithXOR(data) : data;
+            var processedData = data;
+
+            if (self.UseCompression)
+                processedData = CompilerBase.EncodeWithDeflate(processedData);
+
+            if (self.UseXOREncoding)
+                processedData = CompilerBase.EncodeWithXOR(processedData);
+
             self.AddResource(mainExeName, new MemoryStream(processedData), false);
             self._mainExeName = mainExeName;
             return self;
@@ -141,29 +148,19 @@ namespace Bootstraper
 
                 using (MemoryStream Data = new MemoryStream())
                 {
-                    resourceStream.CopyTo(Data);" +
+                    resourceStream.CopyTo(Data);
+" +
 (UseXOREncoding ? @"
                     Data.Position = 0;
-                    using (MemoryStream decodedStream = new MemoryStream())
-                    {
-                        using (Stream xorDecodedStream = DecodeWithXOR(Data))
-                        {
-                            xorDecodedStream.CopyTo(decodedStream);
-                        }
-                        decodedStream.Position = 0;
-                        decodedStream.CopyTo(Data);
-                    }" : "") +
-(UseCompression ? @"
+                    DecodeWithXOR(resourceStream, Data);
                     Data.Position = 0;
-                    using (MemoryStream decompressedStream = new MemoryStream())
-                    {
-                        using (Stream decompressionStream = new DeflateStream(Data, CompressionMode.Decompress))
-                        {
-                            decompressionStream.CopyTo(decompressedStream);
-                        }
-                        decompressedStream.Position = 0;
-                        decompressedStream.CopyTo(Data);
-                    }" : "") + 
+" : "") +
+(UseCompression ? @"
+                    Stream decompressionStream = new GZipStream(Data, CompressionMode.Decompress, leaveOpen: true);
+                    Data.Position = 0;
+                    decompressionStream.CopyTo(Data);
+                    Data.Position = 0;
+" : "") +
                   @"
                     try 
                     {
@@ -174,26 +171,24 @@ namespace Bootstraper
                 }
             }
         }
-
-        private static Stream DecodeWithXOR(Stream stream)
+        private static void DecodeWithXOR(Stream input, Stream output)
         {
             byte[] key = { 0xAA, 0xBB, 0xCC };
+            input.Position = 0;
+
             int keyLength = key.Length;
+            int byteValue;
+            int keyIndex = 0;
 
-            MemoryStream outputStream = new MemoryStream();
-
-            int byteRead;
-            int index = 0;
-
-            while ((byteRead = stream.ReadByte()) != -1)
+            while ((byteValue = input.ReadByte()) != -1)
             {
-                byte decodedByte = (byte)(byteRead ^ key[index % keyLength]);
-                outputStream.WriteByte(decodedByte);
-                index++;
+                byte decodedByte = (byte)(byteValue ^ key[keyIndex]);
+                output.WriteByte(decodedByte);
+
+                keyIndex = (keyIndex + 1) % keyLength;
             }
 
-            outputStream.Position = 0;
-            return outputStream;
+            output.Position = 0;
         }
     }
 
@@ -387,10 +382,12 @@ using System.Reflection;
         {
             byte[] key = { 0xAA, 0xBB, 0xCC };
             byte[] result = new byte[data.Length];
+
             for (int i = 0; i < data.Length; i++)
             {
                 result[i] = (byte)(data[i] ^ key[i % key.Length]);
             }
+
             return result;
         }
         public static byte[] EncodeWithDeflate(byte[] data)
@@ -402,9 +399,10 @@ using System.Reflection;
 
             using (var output = new MemoryStream())
             {
-                using (var deflateStream = new DeflateStream(output, CompressionLevel.Optimal))
+                using (var deflateStream = new GZipStream(output, CompressionLevel.Optimal))
                 {
                     deflateStream.Write(data, 0, data.Length);
+                    deflateStream.Flush(); // Ensure all data is written to the output stream
                 }
                 return output.ToArray();
             }

