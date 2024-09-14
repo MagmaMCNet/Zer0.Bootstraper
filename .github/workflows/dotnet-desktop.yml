@@ -1,49 +1,30 @@
-name: .NET Framework 4.7.2 Desktop
+# This workflow will build a .NET project and attach the output to a release
+# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-net
+
+name: .NET
 
 on:
   push:
-    branches: [ "master" ]
+    branches: [ "main" ]
   pull_request:
-    branches: [ "master" ]
-
+    branches: [ "main" ]
+    
 jobs:
   build:
-    strategy:
-      matrix:
-        configuration: [Release]
-        platform: ["Any CPU"]  # Match this with available solution platforms
-
-    runs-on: windows-latest
-
-    env:
-      Solution_Name: Bootstraper.sln
-      Configuration: ${{ matrix.configuration }}
-      Platform: ${{ matrix.platform }}
+    runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+    - uses: actions/checkout@v4
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
       with:
-        fetch-depth: 0
-
-    - name: Install .NET Framework SDK
-      uses: microsoft/setup-msbuild@v2
-
-    - name: Execute unit tests
-      run: msbuild $env:Solution_Name /t:Test /p:Configuration=$env:Configuration /p:Platform=$env:Platform
-
-    - name: Restore the application
-      run: msbuild $env:Solution_Name /t:Restore /p:Configuration=$env:Configuration /p:Platform=$env:Platform
-
-    - name: Create the app package
-      run: msbuild $env:Wap_Project_Path /p:Configuration=$env:Configuration /p:UapAppxPackageBuildMode=$env:Appx_Package_Build_Mode /p:AppxBundle=$env:Appx_Bundle /p:PackageCertificateKeyFile=GitHubActionsWorkflow.pfx /p:PackageCertificatePassword=${{ secrets.Pfx_Key }}
-      env:
-        Appx_Bundle: Always
-        Appx_Bundle_Platforms: x64
-        Appx_Package_Build_Mode: StoreUpload
-
-    - name: Upload build artifacts
-      uses: actions/upload-artifact@v3
+        dotnet-version: '8.0.x'
+    - name: Restore dependencies
+      run: dotnet restore
+    - name: Build
+      run: dotnet build --no-restore --configuration Release
+    - name: Upload Release Asset
+      uses: actions/upload-artifact@v4
       with:
-        name: MSIX Package
-        path: ${{ env.Wap_Project_Directory }}\AppPackages
+        path: bin/Release/net462/Bootstraper.exe
+        name: Zer0Bootstraper
